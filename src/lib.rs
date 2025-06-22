@@ -2,6 +2,9 @@ use rapier2d::geometry::BroadPhaseMultiSap;
 use rapier2d::prelude::*;
 use wasm_bindgen::prelude::*;
 
+mod liquid_sim;
+
+
 #[wasm_bindgen]
 pub fn calc(a: f64, b: f64, op: &str) -> f64 {
     match op {

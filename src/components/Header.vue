@@ -10,6 +10,12 @@
           <li>
             <RouterLink to="/calc" class="hover:underline"> Calc </RouterLink>
           </li>
+          <li>
+            <RouterLink to="/physicssim" class="hover:underline"> PhysicsSim </RouterLink>
+          </li>
+          <li>
+            <RouterLink to="/liquidsim" class="hover:underline"> LiquidSim </RouterLink>
+          </li>
         </ul>
       </nav>
     </div>
