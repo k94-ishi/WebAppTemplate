@@ -1,87 +1,130 @@
+use rand::Rng;
 use wasm_bindgen::prelude::*;
-use rapier2d::geometry::BroadPhaseMultiSap;
-use rapier2d::prelude::*;
 use js_sys::Array;
 
 #[wasm_bindgen]
-pub struct Sim {
-    pipeline: PhysicsPipeline,
-    gravity: Vector<f32>,
-    integration_parameters: IntegrationParameters,
-    island_manager: IslandManager,
-    broad_phase: BroadPhaseMultiSap,
-    narrow_phase: NarrowPhase,
-    bodies: RigidBodySet,
-    colliders: ColliderSet,
-    query_pipeline: QueryPipeline,
+pub struct Particle {
+    x: f32,
+    y: f32,
+    vx: f32,
+    vy: f32,
 }
 
 #[wasm_bindgen]
-impl Sim {
+pub struct Obstacle {
+    x: f32,
+    y: f32,
+    radius: f32,
+}
+
+#[wasm_bindgen]
+pub struct LiquidSim {
+    particles: Vec<Particle>,
+    obstacles: Vec<Obstacle>,
+}
+
+#[wasm_bindgen]
+impl LiquidSim {
     #[wasm_bindgen(constructor)]
-    pub fn new() -> Sim {
-        let mut bodies = RigidBodySet::new();
-        let mut colliders = ColliderSet::new();
-
-        // 粒子の生成
-        for i in 0..100 {
-            let body = RigidBodyBuilder::dynamic()
-                .translation(vector![i as f32 * 0.05, 5.0])
-                .build();
-            let handle = bodies.insert(body);
-            let collider = ColliderBuilder::ball(0.02).build();
-            colliders.insert_with_parent(collider, handle, &mut bodies);
+    pub fn new() -> LiquidSim {
+        let mut particles = vec![];
+        let mut rng = rand::rng();
+        for _ in 0..500 {
+            let dx: f32 = rng.random::<f32>();
+            let dy: f32 = rng.random::<f32>();
+            let dvx: f32 = rng.random::<f32>();
+            let dvy: f32 = rng.random::<f32>();
+            particles.push(Particle {
+                x: 1000.0 + dx * 100.0,
+                y: 0.0 + dy * 100.0,
+                vx: 0.0 + dvx * 100.0,
+                vy: 0.0 + dvy * 100.0,
+            });
         }
 
-        // 障害物の生成
-        let ground = RigidBodyBuilder::fixed().translation(vector![0.0, -1.0]).build();
-        let ground_handle = bodies.insert(ground);
-        let ground_collider = ColliderBuilder::cuboid(3.0, 0.1).build();
-        colliders.insert_with_parent(ground_collider, ground_handle, &mut bodies);
+        let obstacles = vec![
+            Obstacle { x: 500.0, y: 200.0, radius: 500.0 },
+            Obstacle { x: 0.0, y: 400.0, radius: 500.0 },
+        ];
 
-        let wall = RigidBodyBuilder::fixed().translation(vector![0.5, 1.0]).rotation(0.3).build();
-        let wall_handle = bodies.insert(wall);
-        let wall_collider = ColliderBuilder::cuboid(1.0, 0.05).build();
-        colliders.insert_with_parent(wall_collider, wall_handle, &mut bodies);
-
-        Sim {
-            pipeline: PhysicsPipeline::new(),
-            gravity: vector![0.0, -9.81],
-            integration_parameters: IntegrationParameters::default(),
-            island_manager: IslandManager::new(),
-            broad_phase: BroadPhaseMultiSap::new(),
-            narrow_phase: NarrowPhase::new(),
-            bodies,
-            colliders,
-            query_pipeline: QueryPipeline::new(),
-        }
+        LiquidSim { particles, obstacles }
     }
 
-    pub fn step(&mut self) {
-        self.pipeline.step(
-            &self.gravity,
-            &self.integration_parameters,
-            &mut self.island_manager,
-            &mut self.broad_phase,
-            &mut self.narrow_phase,
-            &mut self.bodies,
-            &mut self.colliders,
-            &mut ImpulseJointSet::new(),
-            &mut MultibodyJointSet::new(),
-            &mut CCDSolver::new(),
-            Some(&mut self.query_pipeline),
-            &(),
-            &(),
-        );
+    pub fn step(&mut self, dt: f32) {
+        let gravity = 100.0;
+        let spring_k = 10.0;
+        let rest_length = 5.0;
+
+        // バネ的な力 (粒子ペアに対して適用)
+        for i in 0..self.particles.len() {
+            for j in (i+1)..self.particles.len() {
+                let (pi, pj) = {
+                    let (head, tail) = self.particles.split_at_mut(j);
+                    (&mut head[i], &mut tail[0])
+                };
+
+                let dx = pj.x - pi.x;
+                let dy = pj.y - pi.y;
+                let dist = (dx * dx + dy * dy).sqrt();
+                if dist > 0.0 {
+                    let force = spring_k * (dist - rest_length);
+                    let fx = force * dx / dist;
+                    let fy = force * dy / dist;
+
+                    pi.vx += fx * dt;
+                    pi.vy += fy * dt;
+                    pj.vx -= fx * dt;
+                    pj.vy -= fy * dt;
+                }
+            }
+        }
+
+        // 粒子の移動と重力
+        for p in &mut self.particles {
+            p.vy += gravity * dt;
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+        }
+
+        // 障害物との衝突
+        for p in &mut self.particles {
+            for obs in &self.obstacles {
+                let dx = p.x - obs.x;
+                let dy = p.y - obs.y;
+                let dist = (dx * dx + dy * dy).sqrt();
+
+                if dist < obs.radius {
+                    let overlap = obs.radius - dist;
+                    let nx = dx / dist;
+                    let ny = dy / dist;
+
+                    p.x += nx * overlap;
+                    p.y += ny * overlap;
+
+                    // 簡単な反射
+                    let dot = p.vx * nx + p.vy * ny;
+                    p.vx -= 2.0 * dot * nx;
+                    p.vy -= 2.0 * dot * ny;
+                }
+            }
+        }
     }
 
     pub fn get_positions(&self) -> Array {
         let positions = Array::new();
-        for (_, body) in self.bodies.iter() {
-            let pos = body.translation();
-            let arr = js_sys::Array::of2(&pos.x.into(), &pos.y.into());
-            positions.push(&arr);
+        for p in &self.particles {
+            let pair = Array::of2(&p.x.into(), &p.y.into());
+            positions.push(&pair);
         }
         positions
+    }
+
+    pub fn get_obstacles(&self) -> Array {
+        let obstacles = Array::new();
+        for o in &self.obstacles {
+            let arr = Array::of3(&o.x.into(), &o.y.into(), &o.radius.into());
+            obstacles.push(&arr);
+        }
+        obstacles
     }
 }
