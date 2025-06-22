@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
+import * as wasm from '../wasm/calc_wasm'
 
 const num1 = ref(0)
 const num2 = ref(0)
 const op = ref('+')
 const result = ref(0)
 
+// onMounted(async () => {
+//   await init() // WASM モジュール初期化
+// })
+
 function compute() {
-  if (wasmModule) {
-    result.value = wasm.calc(num1.value, num2.value, op.value)
-  }
+  result.value = wasm.calc(num1.value, num2.value, op.value)
 }
 </script>
 

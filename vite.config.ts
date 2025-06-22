@@ -21,4 +21,7 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  build: {
+    target: 'esnext', // ESNext にすることで top-level await を許可
+  },
 })

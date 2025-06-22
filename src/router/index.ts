@@ -2,11 +2,13 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Home from '@/components/Home.vue'
 import Calc from '@/components/Calc.vue'
+import PhysicsSim from '@/components/PhysicsSim.vue'
 
 const routes = [
   { path: '/', name: 'Home', component: Home },
   { path: '/posts/:slug', name: 'PostView', component: () => import('@/components/PostView.vue') },
   { path: '/calc', name: 'Calc', component: Calc },
+  { path: '/physicssim', name: 'PhysicsSim', component: PhysicsSim },
 ]
 
 const router = createRouter({
