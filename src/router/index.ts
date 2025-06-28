@@ -4,6 +4,7 @@ import Home from '@/components/Home.vue'
 import Calc from '@/components/Calc.vue'
 import PhysicsSim from '@/components/PhysicsSim.vue'
 import LiquidSim from '@/components/LiquidSim.vue'
+import VirtualDog from '@/components/VirtualDog.vue'
 
 const routes = [
   { path: '/', name: 'Home', component: Home },
@@ -11,6 +12,7 @@ const routes = [
   { path: '/calc', name: 'Calc', component: Calc },
   { path: '/physicssim', name: 'PhysicsSim', component: PhysicsSim },
   { path: '/liquidsim', name: 'LiquidSim', component: LiquidSim },
+  { path: '/virtualdog', name: 'VirtualDog', component: VirtualDog },
 ]
 
 const router = createRouter({

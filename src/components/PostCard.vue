@@ -1,6 +1,6 @@
 <template>
   <div
-    class="bg-white dark:bg-gray-800 rounded-2xl shadow-md border border-gray-200 dark:border-gray-700 p-6 transition-transform duration-300 hover:shadow-xl hover:-translate-y-1"
+    class="bg-white/70 dark:bg-gray-800/70 rounded-2xl shadow-md border border-gray-200 dark:border-gray-700 p-6 transition-transform duration-300 hover:shadow-xl hover:-translate-y-1"
   >
     <h2 class="text-2xl font-bold text-gray-900 dark:text-white mb-3">
       {{ title }}

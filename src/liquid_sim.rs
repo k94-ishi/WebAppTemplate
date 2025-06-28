@@ -1,130 +1,199 @@
-use rand::Rng;
 use wasm_bindgen::prelude::*;
 use js_sys::Array;
-
-#[wasm_bindgen]
-pub struct Particle {
-    x: f32,
-    y: f32,
-    vx: f32,
-    vy: f32,
-}
-
-#[wasm_bindgen]
-pub struct Obstacle {
-    x: f32,
-    y: f32,
-    radius: f32,
-}
+use rapier2d::prelude::*;
+use rapier2d::geometry::BroadPhaseMultiSap;
 
 #[wasm_bindgen]
 pub struct LiquidSim {
-    particles: Vec<Particle>,
-    obstacles: Vec<Obstacle>,
+    pipeline: PhysicsPipeline,
+    gravity: Vector<f32>,
+    integration_parameters: IntegrationParameters,
+    bodies: RigidBodySet,
+    colliders: ColliderSet,
+    island_manager: IslandManager,
+    broad_phase: BroadPhaseMultiSap,
+    narrow_phase: NarrowPhase,
+    ccd_solver: CCDSolver,
+    impulse_joints: ImpulseJointSet,
+    multibody_joints: MultibodyJointSet,
+    query_pipeline: QueryPipeline,
+    body_handles: Vec<RigidBodyHandle>,
 }
 
 #[wasm_bindgen]
 impl LiquidSim {
     #[wasm_bindgen(constructor)]
     pub fn new() -> LiquidSim {
-        let mut particles = vec![];
-        let mut rng = rand::rng();
-        for _ in 0..500 {
-            let dx: f32 = rng.random::<f32>();
-            let dy: f32 = rng.random::<f32>();
-            let dvx: f32 = rng.random::<f32>();
-            let dvy: f32 = rng.random::<f32>();
-            particles.push(Particle {
-                x: 1000.0 + dx * 100.0,
-                y: 0.0 + dy * 100.0,
-                vx: 0.0 + dvx * 100.0,
-                vy: 0.0 + dvy * 100.0,
-            });
+        let mut bodies = RigidBodySet::new();
+        let mut colliders = ColliderSet::new();
+        let impulse_joints = ImpulseJointSet::new();
+
+        let mut body_handles = vec![];
+
+        let cols = 25;
+        let rows = 40;
+        let spacing = 5.0;
+
+        // 粒子作成
+        for y in 0..rows {
+            for x in 0..cols {
+                let px = 100.0 + x as f32 * spacing;
+                let py = 100.0 + y as f32 * spacing;
+
+                let body = RigidBodyBuilder::dynamic()
+                    .translation(vector![px, py])
+                    .linear_damping(1.0)
+                    .build();
+                let handle = bodies.insert(body);
+                let collider = ColliderBuilder::ball(0.1)
+                    .density(100.0)
+                    .friction(0.1)
+                    .build();
+                colliders.insert_with_parent(collider, handle, &mut bodies);
+
+                body_handles.push(handle);
+            }
         }
 
-        let obstacles = vec![
-            Obstacle { x: 500.0, y: 200.0, radius: 500.0 },
-            Obstacle { x: 0.0, y: 400.0, radius: 500.0 },
-        ];
+        // 障害物: 地面
+        let ground = RigidBodyBuilder::fixed()
+            .translation(vector![100.0, 300.0])
+            .build();
+        let ground_handle = bodies.insert(ground);
+        let ground_collider = ColliderBuilder::cuboid(100.0, 200.0).build();
+        colliders.insert_with_parent(ground_collider, ground_handle, &mut bodies);
 
-        LiquidSim { particles, obstacles }
+        // 障害物: 左壁
+        let left_wall = RigidBodyBuilder::fixed()
+            .translation(vector![10., 200.0])
+            .build();
+        let left_wall_handle = bodies.insert(left_wall);
+        let left_collider = ColliderBuilder::cuboid(10.0, 300.0).build();
+        colliders.insert_with_parent(left_collider, left_wall_handle, &mut bodies);
+
+        // 障害物: 円形の障害物
+        let circle_obs = RigidBodyBuilder::fixed()
+            .translation(vector![250.0, 500.0])
+            .build();
+        let circle_handle = bodies.insert(circle_obs);
+        let circle_collider = ColliderBuilder::ball(40.0).build();
+        colliders.insert_with_parent(circle_collider, circle_handle, &mut bodies);
+
+        LiquidSim {
+            pipeline: PhysicsPipeline::new(),
+            gravity: vector![0.0, 98.0],
+            integration_parameters: IntegrationParameters::default(),
+            bodies,
+            colliders,
+            island_manager: IslandManager::new(),
+            broad_phase: BroadPhaseMultiSap::new(),
+            narrow_phase: NarrowPhase::new(),
+            ccd_solver: CCDSolver::new(),
+            impulse_joints,
+            multibody_joints: MultibodyJointSet::new(),
+            query_pipeline: QueryPipeline::new(),
+            body_handles,
+        }
     }
 
-    pub fn step(&mut self, dt: f32) {
-        let gravity = 100.0;
-        let spring_k = 10.0;
-        let rest_length = 5.0;
+    // バネの補助メソッド
+    fn body_pairs(&self) -> Vec<(RigidBodyHandle, RigidBodyHandle)> {
+        let mut pairs = vec![];
+        let cols = 25;
 
-        // バネ的な力 (粒子ペアに対して適用)
-        for i in 0..self.particles.len() {
-            for j in (i+1)..self.particles.len() {
-                let (pi, pj) = {
-                    let (head, tail) = self.particles.split_at_mut(j);
-                    (&mut head[i], &mut tail[0])
+        for (i, &handle_a) in self.body_handles.iter().enumerate() {
+            if i % cols != cols - 1 {
+                pairs.push((handle_a, self.body_handles[i + 1]));
+            }
+            if i + cols < self.body_handles.len() {
+                pairs.push((handle_a, self.body_handles[i + cols]));
+            }
+        }
+        pairs
+    }
+
+    pub fn step(&mut self) {
+        let stiffness = 10.0;
+        let damping = 1.0;
+        let rest_length = 5.;
+
+        for pair in self.body_pairs() {
+            let (h1, h2) = pair;
+            if h1 != h2 {
+                let (first_handle, second_handle) = if h1.into_raw_parts().0 < h2.into_raw_parts().0 {
+                    (h1, h2)
+                } else {
+                    (h2, h1)
                 };
-
-                let dx = pj.x - pi.x;
-                let dy = pj.y - pi.y;
-                let dist = (dx * dx + dy * dy).sqrt();
-                if dist > 0.0 {
-                    let force = spring_k * (dist - rest_length);
-                    let fx = force * dx / dist;
-                    let fy = force * dy / dist;
-
-                    pi.vx += fx * dt;
-                    pi.vy += fy * dt;
-                    pj.vx -= fx * dt;
-                    pj.vy -= fy * dt;
-                }
+            
+                let (body1, body2) = {
+                    let (first, rest) = self.bodies.get_pair_mut(first_handle, second_handle);
+                    (first.unwrap(), rest.unwrap())
+                };
+            
+        
+                let p1 = body1.translation();
+                let p2 = body2.translation();
+        
+                let delta = p2 - p1;
+                let dist = delta.norm();
+                let max_interactive_distance: f32 = 10.0;
+                if dist > 0.0 && dist < max_interactive_distance {
+                    let dir = delta / dist;
+                    let force_mag = stiffness * (dist - rest_length);
+                    let vel_rel = body2.linvel() - body1.linvel();
+                    let damp = damping * vel_rel.dot(&dir);
+        
+                    let force = (force_mag + damp) * dir;
+        
+                    body1.add_force(-force, true);
+                    body2.add_force(force, true);
+                } 
             }
         }
 
-        // 粒子の移動と重力
-        for p in &mut self.particles {
-            p.vy += gravity * dt;
-            p.x += p.vx * dt;
-            p.y += p.vy * dt;
-        }
-
-        // 障害物との衝突
-        for p in &mut self.particles {
-            for obs in &self.obstacles {
-                let dx = p.x - obs.x;
-                let dy = p.y - obs.y;
-                let dist = (dx * dx + dy * dy).sqrt();
-
-                if dist < obs.radius {
-                    let overlap = obs.radius - dist;
-                    let nx = dx / dist;
-                    let ny = dy / dist;
-
-                    p.x += nx * overlap;
-                    p.y += ny * overlap;
-
-                    // 簡単な反射
-                    let dot = p.vx * nx + p.vy * ny;
-                    p.vx -= 2.0 * dot * nx;
-                    p.vy -= 2.0 * dot * ny;
-                }
-            }
-        }
+        self.pipeline.step(
+            &self.gravity,
+            &self.integration_parameters,
+            &mut self.island_manager,
+            &mut self.broad_phase,
+            &mut self.narrow_phase,
+            &mut self.bodies,
+            &mut self.colliders,
+            &mut self.impulse_joints,
+            &mut self.multibody_joints,
+            &mut self.ccd_solver,
+            Some(&mut self.query_pipeline),
+            &(),
+            &(),
+        );
     }
 
     pub fn get_positions(&self) -> Array {
         let positions = Array::new();
-        for p in &self.particles {
-            let pair = Array::of2(&p.x.into(), &p.y.into());
-            positions.push(&pair);
+        for handle in &self.body_handles {
+            if let Some(body) = self.bodies.get(*handle) {
+                let pos = body.translation();
+                positions.push(&Array::of2(&pos.x.into(), &pos.y.into()));
+            }
         }
         positions
     }
 
-    pub fn get_obstacles(&self) -> Array {
-        let obstacles = Array::new();
-        for o in &self.obstacles {
-            let arr = Array::of3(&o.x.into(), &o.y.into(), &o.radius.into());
-            obstacles.push(&arr);
+    pub fn get_colliders(&self) -> Array {
+        let colliders = Array::new();
+        for (_, col) in self.colliders.iter() {
+            let pos = col.position().translation.vector;
+            if let Some(ball) = col.shape().as_ball() {
+                let arr = Array::of4(&pos.x.into(), &pos.y.into(), &ball.radius.into(), &"ball".into());
+                colliders.push(&arr);
+            } else if let Some(cuboid) = col.shape().as_cuboid() {
+                let hx = cuboid.half_extents.x;
+                let hy = cuboid.half_extents.y;
+                let arr = Array::of5(&pos.x.into(), &pos.y.into(), &hx.into(), &hy.into(), &"cuboid".into());
+                colliders.push(&arr);
+            }
         }
-        obstacles
+        colliders
     }
 }

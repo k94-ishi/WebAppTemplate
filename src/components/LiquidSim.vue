@@ -22,7 +22,7 @@ onMounted(async () => {
   const dt = 1 / 60
 
   function draw() {
-    sim!.step(dt)
+    sim!.step()
 
     ctx.clearRect(0, 0, canvas!.width, canvas!.height)
 
@@ -37,19 +37,30 @@ onMounted(async () => {
     }
 
     // 障害物描画
-    const obstacles = sim!.get_obstacles()
-    for (let i = 0; i < obstacles.length; i++) {
-      const [x, y, r] = obstacles[i]
-      ctx.beginPath()
-      ctx.arc(x as number, y as number, r as number, 0, Math.PI * 2)
-      ctx.strokeStyle = 'white'
-      ctx.lineWidth = 2
-      ctx.stroke()
+    const colliders = sim!.get_colliders()
+    for (let i = 0; i < colliders.length; i++) {
+      const arr = colliders[i]
+      if (arr[3] === 'ball') {
+        const [x, y, r] = [arr[0] as number, arr[1] as number, arr[2] as number]
+        ctx.beginPath()
+        ctx.arc(x, y, r, 0, Math.PI * 2)
+        ctx.strokeStyle = 'white'
+        ctx.lineWidth = 2
+        ctx.stroke()
+      } else if (arr[4] === 'cuboid') {
+        const [x, y, hx, hy] = [
+          arr[0] as number,
+          arr[1] as number,
+          arr[2] as number,
+          arr[3] as number,
+        ]
+        ctx.strokeStyle = 'white'
+        ctx.lineWidth = 2
+        ctx.strokeRect(x - hx, y - hy, hx * 2, hy * 2)
+      }
     }
-
     requestAnimationFrame(draw)
   }
-
   draw()
 })
 </script>
